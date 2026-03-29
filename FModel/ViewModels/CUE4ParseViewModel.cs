@@ -603,6 +603,64 @@ public class CUE4ParseViewModel : ViewModel
     public void SaveFolder(CancellationToken cancellationToken, TreeItem folder)
         => BulkFolder(cancellationToken, folder, asset => Extract(cancellationToken, asset, TabControl.HasNoTabs, EBulkType.Properties | EBulkType.Auto));
 
+    public void SaveFolderParallel(CancellationToken cancellationToken, TreeItem folder)
+    {
+        var assets = new List<GameFile>();
+        CollectFolderAssets(folder, assets);
+
+        var totalMemory = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes;
+
+        Parallel.ForEach(assets, new ParallelOptions
+        {
+            CancellationToken = cancellationToken,
+            MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount * 2 - 1)
+        }, asset =>
+        {
+            if (asset.Extension is not ("uasset" or "umap")) return;
+
+            // Throttle if system memory load exceeds 90% to avoid exhausting RAM
+            // and triggering stop-the-world GC pauses that freeze the UI thread
+            var memInfo = GC.GetGCMemoryInfo();
+            while ((double)memInfo.MemoryLoadBytes / totalMemory > 0.90)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                GC.Collect(2, GCCollectionMode.Optimized, blocking: false);
+                Thread.Sleep(100);
+                memInfo = GC.GetGCMemoryInfo();
+            }
+
+            try
+            {
+                var result = Provider.GetLoadPackageResult(asset);
+                var json = JsonConvert.SerializeObject(result.GetDisplayData(true), Formatting.Indented);
+                var fileName = Path.ChangeExtension(asset.Name, ".json");
+                var directory = Path.Combine(
+                    UserSettings.Default.PropertiesDirectory,
+                    UserSettings.Default.KeepDirectoryStructure ? asset.Directory : "",
+                    fileName).Replace('\\', '/');
+                Directory.CreateDirectory(directory.SubstringBeforeLast('/'));
+                File.WriteAllText(directory, json);
+                Log.Information("{FileName} successfully saved", fileName);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception e)
+            {
+                Log.Warning("Could not save '{AssetName}': {Message}", asset.Name, e.Message);
+            }
+        });
+    }
+
+    private static void CollectFolderAssets(TreeItem folder, List<GameFile> assets)
+    {
+        foreach (var entry in folder.AssetsList.Assets)
+            assets.Add(entry.Asset);
+        foreach (var f in folder.Folders)
+            CollectFolderAssets(f, assets);
+    }
+
     public void TextureFolder(CancellationToken cancellationToken, TreeItem folder)
         => BulkFolder(cancellationToken, folder, asset => Extract(cancellationToken, asset, TabControl.HasNoTabs, EBulkType.Textures | EBulkType.Auto));
 

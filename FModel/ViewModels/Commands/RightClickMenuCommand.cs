@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using CUE4Parse.FileProvider.Objects;
@@ -142,12 +143,34 @@ public class RightClickMenuCommand : ViewModelCommand<ApplicationViewModel>
                     {
                         Thread.Yield();
                         cancellationToken.ThrowIfCancellationRequested();
+                        var swSeq = Stopwatch.StartNew();
                         contextViewModel.CUE4Parse.SaveFolder(cancellationToken, folder);
+                        swSeq.Stop();
+                        var elapsedSeq = swSeq.Elapsed.TotalSeconds;
 
                         FLogger.Append(ELog.Information, () =>
                         {
                             FLogger.Text("Successfully saved ", Constants.WHITE);
-                            FLogger.Link(folder.PathAtThisPoint, UserSettings.Default.PropertiesDirectory, true);
+                            FLogger.Link(folder.PathAtThisPoint, UserSettings.Default.PropertiesDirectory);
+                            FLogger.Text($" in {elapsedSeq:F1} seconds", Constants.WHITE, true);
+                        });
+                    }
+                    break;
+                case "Folders_Save_Properties_Parallel":
+                    foreach (var folder in folders)
+                    {
+                        Thread.Yield();
+                        cancellationToken.ThrowIfCancellationRequested();
+                        var swPar = Stopwatch.StartNew();
+                        contextViewModel.CUE4Parse.SaveFolderParallel(cancellationToken, folder);
+                        swPar.Stop();
+                        var elapsedPar = swPar.Elapsed.TotalSeconds;
+
+                        FLogger.Append(ELog.Information, () =>
+                        {
+                            FLogger.Text("Successfully saved ", Constants.WHITE);
+                            FLogger.Link(folder.PathAtThisPoint, UserSettings.Default.PropertiesDirectory);
+                            FLogger.Text($" in {elapsedPar:F1} seconds", Constants.WHITE, true);
                         });
                     }
                     break;
